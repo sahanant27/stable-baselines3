@@ -30,7 +30,7 @@ For that you will need to create two files:
 
   import rl_zoo3
   import rl_zoo3.train
-  from rl_zoo3.train import train
+  from extra.RL_zoo3.train import train
   from sbx import DDPG, DQN, PPO, SAC, TD3, TQC, CrossQ
 
   rl_zoo3.ALGOS["ddpg"] = DDPG
@@ -58,7 +58,7 @@ Then you can call ``python train_sbx.py --algo sac --env Pendulum-v1`` and use t
 
   import rl_zoo3
   import rl_zoo3.enjoy
-  from rl_zoo3.enjoy import enjoy
+  from extra.RL_zoo3.enjoy import enjoy
   from sbx import DDPG, DQN, PPO, SAC, TD3, TQC, CrossQ
 
   rl_zoo3.ALGOS["ddpg"] = DDPG
