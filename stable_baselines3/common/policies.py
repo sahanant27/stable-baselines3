@@ -112,7 +112,8 @@ class BaseModel(nn.Module):
         if features_extractor is None:
             # The features extractor is not shared, create a new one
             features_extractor = self.make_features_extractor()
-        net_kwargs.update(dict(features_extractor=features_extractor, features_dim=features_extractor.features_dim))
+        net_kwargs.update(dict(features_extractor=features_extractor,
+                          features_dim=features_extractor.features_dim))
         return net_kwargs
 
     def make_features_extractor(self) -> BaseFeaturesExtractor:
@@ -127,7 +128,8 @@ class BaseModel(nn.Module):
         :param features_extractor: The features extractor to use.
         :return: The extracted features
         """
-        preprocessed_obs = preprocess_obs(obs, self.observation_space, normalize_images=self.normalize_images)
+        preprocessed_obs = preprocess_obs(
+            obs, self.observation_space, normalize_images=self.normalize_images)
         return features_extractor(preprocessed_obs)
 
     def _get_constructor_parameters(self) -> dict[str, Any]:
@@ -161,7 +163,8 @@ class BaseModel(nn.Module):
 
         :param path:
         """
-        th.save({"state_dict": self.state_dict(), "data": self._get_constructor_parameters()}, path)
+        th.save({"state_dict": self.state_dict(),
+                "data": self._get_constructor_parameters()}, path)
 
     @classmethod
     def load(cls: type[SelfBaseModel], path: str, device: Union[th.device, str] = "auto") -> SelfBaseModel:
@@ -175,7 +178,8 @@ class BaseModel(nn.Module):
         device = get_device(device)
         # Note(antonin): we cannot use `weights_only=True` here because we need to allow
         # gymnasium imports for the policy to be loaded successfully
-        saved_variables = th.load(path, map_location=device, weights_only=False)
+        saved_variables = th.load(
+            path, map_location=device, weights_only=False)
 
         # Create policy object
         model = cls(**saved_variables["data"])
@@ -190,7 +194,8 @@ class BaseModel(nn.Module):
 
         :param vector:
         """
-        th.nn.utils.vector_to_parameters(th.as_tensor(vector, dtype=th.float, device=self.device), self.parameters())
+        th.nn.utils.vector_to_parameters(th.as_tensor(
+            vector, dtype=th.float, device=self.device), self.parameters())
 
     def parameters_to_vector(self) -> np.ndarray:
         """
@@ -226,10 +231,12 @@ class BaseModel(nn.Module):
             ), f"The observation provided is a dict but the obs space is {self.observation_space}"
             for key, obs in observation.items():
                 obs_space = self.observation_space.spaces[key]
-                vectorized_env = vectorized_env or is_vectorized_observation(maybe_transpose(obs, obs_space), obs_space)
+                vectorized_env = vectorized_env or is_vectorized_observation(
+                    maybe_transpose(obs, obs_space), obs_space)
         else:
             vectorized_env = is_vectorized_observation(
-                maybe_transpose(observation, self.observation_space), self.observation_space
+                maybe_transpose(
+                    observation, self.observation_space), self.observation_space
             )
         return vectorized_env
 
@@ -250,14 +257,17 @@ class BaseModel(nn.Module):
             # need to copy the dict as the dict in VecFrameStack will become a torch tensor
             observation = copy.deepcopy(observation)
             for key, obs in observation.items():
-                obs_space = self.observation_space.spaces[key]
-                if is_image_space(obs_space):
-                    obs_ = maybe_transpose(obs, obs_space)
-                else:
-                    obs_ = np.array(obs)
-                vectorized_env = vectorized_env or is_vectorized_observation(obs_, obs_space)
-                # Add batch dimension if needed
-                observation[key] = obs_.reshape((-1, *self.observation_space[key].shape))  # type: ignore[misc]
+                if key in self.observation_space.spaces.keys():
+                    obs_space = self.observation_space.spaces[key]
+                    if is_image_space(obs_space):
+                        obs_ = maybe_transpose(obs, obs_space)
+                    else:
+                        obs_ = np.array(obs)
+                    vectorized_env = vectorized_env or is_vectorized_observation(
+                        obs_, obs_space)
+                    # Add batch dimension if needed
+                    observation[key] = obs_.reshape(
+                        (-1, *self.observation_space[key].shape))  # type: ignore[misc]
 
         elif is_image_space(self.observation_space):
             # Handle the different cases for images
@@ -269,9 +279,11 @@ class BaseModel(nn.Module):
 
         if not isinstance(observation, dict):
             # Dict obs need to be handled separately
-            vectorized_env = is_vectorized_observation(observation, self.observation_space)
+            vectorized_env = is_vectorized_observation(
+                observation, self.observation_space)
             # Add batch dimension if needed
-            observation = observation.reshape((-1, *self.observation_space.shape))  # type: ignore[misc]
+            observation = observation.reshape(
+                (-1, *self.observation_space.shape))  # type: ignore[misc]
 
         obs_tensor = obs_as_tensor(observation, self.device)
         return obs_tensor, vectorized_env
@@ -367,16 +379,20 @@ class BasePolicy(BaseModel, ABC):
         with th.no_grad():
             actions = self._predict(obs_tensor, deterministic=deterministic)
         # Convert to numpy, and reshape to the original action shape
-        actions = actions.cpu().numpy().reshape((-1, *self.action_space.shape))  # type: ignore[misc, assignment]
+        actions = actions.cpu().numpy().reshape(
+            (-1, *self.action_space.shape))  # type: ignore[misc, assignment]
 
         if isinstance(self.action_space, spaces.Box):
             if self.squash_output:
                 # Rescale to proper domain when using squashing
-                actions = self.unscale_action(actions)  # type: ignore[assignment, arg-type]
+                # type: ignore[assignment, arg-type]
+                actions = self.unscale_action(actions)
             else:
                 # Actions could be on arbitrary scale, so clip the actions to avoid
                 # out of bound error (e.g. if sampling from a Gaussian distribution)
-                actions = np.clip(actions, self.action_space.low, self.action_space.high)  # type: ignore[assignment, arg-type]
+                # type: ignore[assignment, arg-type]
+                actions = np.clip(
+                    actions, self.action_space.low, self.action_space.high)
 
         # Remove batch dimension if needed
         if not vectorized_env:
@@ -516,7 +532,8 @@ class ActorCriticPolicy(BasePolicy):
         self.log_std_init = log_std_init
         dist_kwargs = None
 
-        assert not (squash_output and not use_sde), "squash_output=True is only available when using gSDE (use_sde=True)"
+        assert not (
+            squash_output and not use_sde), "squash_output=True is only available when using gSDE (use_sde=True)"
         # Keyword arguments for gSDE distribution
         if use_sde:
             dist_kwargs = {
@@ -530,14 +547,16 @@ class ActorCriticPolicy(BasePolicy):
         self.dist_kwargs = dist_kwargs
 
         # Action distribution
-        self.action_dist = make_proba_distribution(action_space, use_sde=use_sde, dist_kwargs=dist_kwargs)
+        self.action_dist = make_proba_distribution(
+            action_space, use_sde=use_sde, dist_kwargs=dist_kwargs)
 
         self._build(lr_schedule)
 
     def _get_constructor_parameters(self) -> dict[str, Any]:
         data = super()._get_constructor_parameters()
 
-        default_none_kwargs = self.dist_kwargs or collections.defaultdict(lambda: None)  # type: ignore[arg-type, return-value]
+        default_none_kwargs = self.dist_kwargs or collections.defaultdict(
+            lambda: None)  # type: ignore[arg-type, return-value]
 
         data.update(
             dict(
@@ -548,7 +567,8 @@ class ActorCriticPolicy(BasePolicy):
                 squash_output=default_none_kwargs["squash_output"],
                 full_std=default_none_kwargs["full_std"],
                 use_expln=default_none_kwargs["use_expln"],
-                lr_schedule=self._dummy_schedule,  # dummy lr schedule, not needed for loading policy alone
+                # dummy lr schedule, not needed for loading policy alone
+                lr_schedule=self._dummy_schedule,
                 ortho_init=self.ortho_init,
                 optimizer_class=self.optimizer_class,
                 optimizer_kwargs=self.optimizer_kwargs,
@@ -564,7 +584,8 @@ class ActorCriticPolicy(BasePolicy):
 
         :param n_envs:
         """
-        assert isinstance(self.action_dist, StateDependentNoiseDistribution), "reset_noise() is only available when using gSDE"
+        assert isinstance(
+            self.action_dist, StateDependentNoiseDistribution), "reset_noise() is only available when using gSDE"
         self.action_dist.sample_weights(self.log_std, batch_size=n_envs)
 
     def _build_mlp_extractor(self) -> None:
@@ -602,9 +623,11 @@ class ActorCriticPolicy(BasePolicy):
                 latent_dim=latent_dim_pi, latent_sde_dim=latent_dim_pi, log_std_init=self.log_std_init
             )
         elif isinstance(self.action_dist, (CategoricalDistribution, MultiCategoricalDistribution, BernoulliDistribution)):
-            self.action_net = self.action_dist.proba_distribution_net(latent_dim=latent_dim_pi)
+            self.action_net = self.action_dist.proba_distribution_net(
+                latent_dim=latent_dim_pi)
         else:
-            raise NotImplementedError(f"Unsupported distribution '{self.action_dist}'.")
+            raise NotImplementedError(
+                f"Unsupported distribution '{self.action_dist}'.")
 
         self.value_net = nn.Linear(self.mlp_extractor.latent_dim_vf, 1)
         # Init weights: use orthogonal initialization
@@ -631,7 +654,8 @@ class ActorCriticPolicy(BasePolicy):
                 module.apply(partial(self.init_weights, gain=gain))
 
         # Setup optimizer with initial learning rate
-        self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)  # type: ignore[call-arg]
+        self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(
+            1), **self.optimizer_kwargs)  # type: ignore[call-arg]
 
     def forward(self, obs: th.Tensor, deterministic: bool = False) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
         """
@@ -654,7 +678,8 @@ class ActorCriticPolicy(BasePolicy):
         distribution = self._get_action_dist_from_latent(latent_pi)
         actions = distribution.get_actions(deterministic=deterministic)
         log_prob = distribution.log_prob(actions)
-        actions = actions.reshape((-1, *self.action_space.shape))  # type: ignore[misc]
+        actions = actions.reshape(
+            (-1, *self.action_space.shape))  # type: ignore[misc]
         return actions, values, log_prob
 
     def extract_features(  # type: ignore[override]
@@ -963,7 +988,8 @@ class ContinuousCritic(BaseModel):
         self.n_critics = n_critics
         self.q_networks: list[nn.Module] = []
         for idx in range(n_critics):
-            q_net_list = create_mlp(features_dim + action_dim, 1, net_arch, activation_fn)
+            q_net_list = create_mlp(
+                features_dim + action_dim, 1, net_arch, activation_fn)
             q_net = nn.Sequential(*q_net_list)
             self.add_module(f"qf{idx}", q_net)
             self.q_networks.append(q_net)
