@@ -104,6 +104,10 @@ class TD3(OffPolicyAlgorithm):
         seed: Optional[int] = None,
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
+        clip_critic_grad_norm: Optional[float] = None,
+        clamp_critic_max: Optional[float] = None,
+        clamp_critic_min: Optional[float] = None,
+        mean_q: bool = False,
     ):
         super().__init__(
             policy,
@@ -136,6 +140,11 @@ class TD3(OffPolicyAlgorithm):
         self.target_noise_clip = target_noise_clip
         self.target_policy_noise = target_policy_noise
 
+        self.clip_critic_grad_norm = clip_critic_grad_norm
+        self.clamp_critic_max = clamp_critic_max
+        self.clamp_critic_min = clamp_critic_min
+        self.mean_q = mean_q
+
         if _init_setup_model:
             self._setup_model()
 
@@ -161,7 +170,7 @@ class TD3(OffPolicyAlgorithm):
         # Update learning rate according to lr schedule
         self._update_learning_rate([self.actor.optimizer, self.critic.optimizer])
 
-        actor_losses, critic_losses = [], []
+        actor_losses, critic_losses, critic_grad_norms, q_targets = [], [], [], []
         for _ in range(gradient_steps):
             self._n_updates += 1
             # Sample replay buffer
@@ -179,6 +188,13 @@ class TD3(OffPolicyAlgorithm):
                 next_q_values = th.cat(self.critic_target(replay_data.next_observations, next_actions), dim=1)
                 next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * discounts * next_q_values
+                   # Bound critic value
+                if self.clamp_critic_min is not None:
+                    target_q_values = target_q_values.clamp(min=self.clamp_critic_min)
+                if self.clamp_critic_max is not None:
+                    target_q_values = target_q_values.clamp(max=self.clamp_critic_max)
+                q_targets.append(target_q_values.mean().item())
+
 
             # Get current Q-values estimates for each critic network
             current_q_values = self.critic(replay_data.observations, replay_data.actions)
@@ -191,7 +207,15 @@ class TD3(OffPolicyAlgorithm):
             # Optimize the critics
             self.critic.optimizer.zero_grad()
             critic_loss.backward()
+
+            if self.clip_critic_grad_norm is not None:
+                th.nn.utils.clip_grad_norm_(self.critic.parameters(), self.clip_critic_grad_norm)
+            critic_grad_norms.append(get_grad_norm(self.critic.parameters()))
+            
+
             self.critic.optimizer.step()
+
+            
 
             # Delayed policy updates
             if self._n_updates % self.policy_delay == 0:
@@ -214,6 +238,8 @@ class TD3(OffPolicyAlgorithm):
         if len(actor_losses) > 0:
             self.logger.record("train/actor_loss", np.mean(actor_losses))
         self.logger.record("train/critic_loss", np.mean(critic_losses))
+        self.logger.record("train/critic_grad_norms", np.mean(critic_grad_norms))
+        self.logger.record("train/q_targets", np.mean(q_targets))
 
     def learn(
         self: SelfTD3,
@@ -239,3 +265,12 @@ class TD3(OffPolicyAlgorithm):
     def _get_torch_save_params(self) -> tuple[list[str], list[str]]:
         state_dicts = ["policy", "actor.optimizer", "critic.optimizer"]
         return state_dicts, []
+
+def get_grad_norm(params):
+    total_norm = 0
+    parameters = [p for p in params if p.grad is not None and p.requires_grad]
+    for p in parameters:
+        param_norm = p.grad.detach().data.norm(2)
+        total_norm += param_norm.item() ** 2
+    total_norm = total_norm ** 0.5
+    return total_norm
