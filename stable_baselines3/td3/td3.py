@@ -94,7 +94,9 @@ class TD3(OffPolicyAlgorithm):
         replay_buffer_kwargs: Optional[dict[str, Any]] = None,
         optimize_memory_usage: bool = False,
         n_steps: int = 1,
-        policy_delay: int = 2,
+        # policy_delay: int = 2,
+        actor_update_interval: int = 1,
+        target_update_interval: int = 1,
         target_policy_noise: float = 0.2,
         target_noise_clip: float = 0.5,
         stats_window_size: int = 100,
@@ -136,7 +138,9 @@ class TD3(OffPolicyAlgorithm):
             support_multi_env=True,
         )
 
-        self.policy_delay = policy_delay
+        # self.policy_delay = policy_delay
+        self.actor_update_interval = actor_update_interval
+        self.target_update_interval = target_update_interval
         self.target_noise_clip = target_noise_clip
         self.target_policy_noise = target_policy_noise
 
@@ -163,6 +167,20 @@ class TD3(OffPolicyAlgorithm):
         self.critic = self.policy.critic
         self.critic_target = self.policy.critic_target
 
+    def _get_next_q_values(self, replay_data) -> th.Tensor:
+        noise = replay_data.actions.clone().data.normal_(0, self.target_policy_noise)
+        noise = noise.clamp(-self.target_noise_clip, self.target_noise_clip)
+        next_actions = (self.actor_target(replay_data.next_observations) + noise).clamp(-1, 1)
+
+        # Compute the next Q-values: min over all critics targets
+        next_q_values = th.cat(self.critic_target(replay_data.next_observations, next_actions), dim=1)
+        if self.mean_q:
+            next_q_values = th.mean(next_q_values, dim=1, keepdim=True)
+        else:
+            next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
+        
+        return next_q_values
+
     def train(self, gradient_steps: int, batch_size: int = 100) -> None:
         # Switch to train mode (this affects batch norm / dropout)
         self.policy.set_training_mode(True)
@@ -180,15 +198,13 @@ class TD3(OffPolicyAlgorithm):
 
             with th.no_grad():
                 # Select action according to policy and add clipped noise
-                noise = replay_data.actions.clone().data.normal_(0, self.target_policy_noise)
-                noise = noise.clamp(-self.target_noise_clip, self.target_noise_clip)
-                next_actions = (self.actor_target(replay_data.next_observations) + noise).clamp(-1, 1)
+              
 
                 # Compute the next Q-values: min over all critics targets
-                next_q_values = th.cat(self.critic_target(replay_data.next_observations, next_actions), dim=1)
-                next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
+                next_q_values = self._get_next_q_values(replay_data)
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * discounts * next_q_values
-                   # Bound critic value
+                # NOTE additional change to stable-baselines3 code
+                # Bound critic value
                 if self.clamp_critic_min is not None:
                     target_q_values = target_q_values.clamp(min=self.clamp_critic_min)
                 if self.clamp_critic_max is not None:
@@ -198,7 +214,7 @@ class TD3(OffPolicyAlgorithm):
 
             # Get current Q-values estimates for each critic network
             current_q_values = self.critic(replay_data.observations, replay_data.actions)
-
+            # critic_loss = sum(F.smooth_l1_loss(current_q, target_q_values) for current_q in current_q_values)
             # Compute critic loss
             critic_loss = sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
             assert isinstance(critic_loss, th.Tensor)
@@ -218,16 +234,18 @@ class TD3(OffPolicyAlgorithm):
             
 
             # Delayed policy updates
-            if self._n_updates % self.policy_delay == 0:
+            # if self._n_updates % self.policy_delay == 0:
+            if self._n_updates % self.actor_update_interval == 0:
                 # Compute actor loss
-                actor_loss = -self.critic.q1_forward(replay_data.observations, self.actor(replay_data.observations)).mean()
+                actor_loss = self.get_actor_loss(replay_data)
                 actor_losses.append(actor_loss.item())
 
                 # Optimize the actor
                 self.actor.optimizer.zero_grad()
                 actor_loss.backward()
                 self.actor.optimizer.step()
-
+                
+            if self._n_updates % self.target_update_interval == 0:
                 polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
                 polyak_update(self.actor.parameters(), self.actor_target.parameters(), self.tau)
                 # Copy running stats, see GH issue #996
@@ -241,6 +259,10 @@ class TD3(OffPolicyAlgorithm):
         self.logger.record("train/critic_grad_norms", np.mean(critic_grad_norms))
         self.logger.record("train/q_targets", np.mean(q_targets))
 
+    def get_actor_loss(self, replay_data):
+        actor_loss = -self.critic.q1_forward(replay_data.observations, self.actor(replay_data.observations)).mean()
+        return actor_loss
+    
     def learn(
         self: SelfTD3,
         total_timesteps: int,
